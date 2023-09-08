@@ -1,7 +1,8 @@
 from flask import Flask,request,jsonify,Response
 import json
 import logging
-from .protobuf.msg_pb2 import msg_pb2
+from .protobuf.generated import msg_pb2
+from .utils.timespan import Timespan
 FlaskApp= Flask(__name__)
 
 logger=logging.getLogger('comm_flask')
@@ -11,7 +12,7 @@ def rpc_method(func):
     '''
     添加相应函数,
 
-    func : callable(**param)
+    func : callable(**param) -> return: obj (can jsonified)
 
     param 为参数
     '''
@@ -22,6 +23,8 @@ blob_function_dict={}
 def rpc_blob_method(func):
     '''
     添加函数,传输blob对象
+
+    func : callable(param:str,blob:bytes) -> return:str, ret blob:bytes 
     '''
     blob_function_dict[func.__name__]=func
     return func
@@ -46,8 +49,9 @@ def on_call_blob():
         rslt.returns,rslt.blob=blob_function_dict[pb.method_name](pb)        
     except KeyError:
         logger.error(f'no such method {pb.method_name}')
-        
-    return Response(rslt.SerializeToString(),content_type='application/octet-stream')
+
+    tmp=Response(rslt.SerializeToString(),content_type='application/octet-stream')
+    return tmp
 
 @FlaskApp.route('/call',methods= ['POST'])
 def on_call():
@@ -59,12 +63,16 @@ def on_call():
         try:
             js=json.loads(request.get_data(as_text=True))
             name=js['func_name']
-            rslt['ret']=function_dict[name](**js['param'])        
+            param=js['param']
+            if param:
+                rslt['ret']=function_dict[name]()        
+            else:
+                rslt['ret']=function_dict[name](**js['param'])        
         except KeyError:
             logger.error(f'no such method {name}')
         except TypeError:
             logger.error(f'{name}() got unexpected keyword arguments {js["param"]}')
-
+    
     return jsonify(rslt)
 
 def start_async(host='localhost',port=14370):
@@ -72,6 +80,6 @@ def start_async(host='localhost',port=14370):
     threading.Thread(target=start,args=(host,port)).start()
 
 def start(host='localhost',port=14370):
-    FlaskApp.run(host,port)
+    FlaskApp.run(host,port,threaded=True)
 if __name__ == '__main__':
     FlaskApp.run()
